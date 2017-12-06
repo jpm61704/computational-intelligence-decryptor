@@ -89,7 +89,7 @@ cwords = cwords' [] []
         cwords' acc cur []         = acc ++ [cur]
 
 addText :: CText -> CText -> CText
-addText ((Letter x):xs) ((Letter y):ys) = (Letter (plus x y)) : addText xs ys
+addText ((Letter x):xs) ((Letter y):ys) = (Letter (plus B (plus x y))) : addText xs ys
 addText (SPACE:xs) ys = SPACE : addText xs ys
 addText xs (SPACE:ys) = SPACE : addText xs ys
 addText _ _ = []

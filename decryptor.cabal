@@ -23,6 +23,7 @@ library
                      , Decipher
                      , CipherData
                      , Dictionary
+                     , Encrypt
   build-depends:       base >= 4.7 && < 5
                      , text
                      , vector

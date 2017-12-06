@@ -11,7 +11,10 @@ import           Dictionary
 import           System.IO
 import           System.Random
 
-newtype Key = Key (V.Vector Letter) deriving (Show, Eq)
+newtype Key = Key (V.Vector Letter) deriving (Eq)
+
+instance Show Key where
+  show (Key k) = concat $ fmap (show) k
 
 keyFromList :: [Letter] -> Key
 keyFromList = Key . V.fromList
@@ -76,11 +79,26 @@ decipher gen d key_len (pop_size, mutate_rate, percent_parents) text = do
    x <- evalStateT (evolve (mutate_rate, percent_parents) d text xs) gen
    return $ V.head x
 
+decipher2 :: StdGen -> Dictionary -> Dictionary -> Int -> (Int, Double, Double) -> EncryptedText -> IO Key
+decipher2 gen cutoff_dict evolve_dict key_len (pop_size, mutate_rate, percent_parents) text = do
+  let xs = evalState (randomInitialPopulation pop_size key_len) gen
+  x <- evalStateT (evolve2 (mutate_rate, percent_parents) cutoff_dict evolve_dict text xs) gen
+  return $ V.head x
+
+evolve2 :: (Double, Double) -> Dictionary -> Dictionary -> EncryptedText -> V.Vector Key -> StateT StdGen IO (V.Vector Key)
+evolve2 config cutoff_dict evolve_dict text keys = do
+  next_gen <- hoistState $ nextGeneration config evolve_dict text keys
+  let (avg, ranks) = rankPopulation cutoff_dict text next_gen
+  lift $ putStrLn $ "avg: " ++ (show avg) ++ "\tsample: " ++ (show (next_gen V.! 0)) ++ "\t" ++ (show (next_gen V.! 1)) ++ "\t" ++ (show (next_gen V.! 2))
+  case checkSolution ranks next_gen of
+    (Just done) -> return (V.singleton done)
+    Nothing     -> evolve2 config cutoff_dict evolve_dict text next_gen
+
 evolve :: (Double, Double) -> Dictionary -> EncryptedText -> V.Vector Key -> StateT StdGen IO (V.Vector Key)
 evolve config d t ks = do
   next_gen <- hoistState $ nextGeneration config d t ks
   let (avg, ranks) = rankPopulation d t next_gen
-  lift $ print avg
+  lift $ putStrLn $ "avg: " ++ (show avg) ++ "\tsample: " ++ (show (next_gen V.! 0))
   case checkSolution ranks next_gen of
     (Just done) -> return (V.singleton done)
     Nothing     -> evolve config d t next_gen
@@ -162,13 +180,19 @@ rankPopulation d e ks = (avg, ranks)
   where ranks = fmap (evaluateKey d e) ks
         avg   = (sum ranks) / (fromIntegral (length ranks))
 
+evaluateKey' :: Dictionary -> EncryptedText -> Key -> Double
+evaluateKey' d e k = dist
+  where text = decode k e
+        wrds = cwords text
+        dist    = product $ map (maximum . wordMatchDistances d) wrds
 
 
 evaluateKey :: Dictionary -> EncryptedText -> Key -> Double
 evaluateKey d e k = dist
   where text = decode k e
         wrds = cwords text
-        dist = product $ map (maximum . wordMatchDistances d) wrds
+        s    = sum $ map (maximum . wordMatchDistances d) wrds
+        dist = s / (fromIntegral (length wrds))
 
 wordMatchDistances :: Dictionary -> CText -> [Double]
 wordMatchDistances dict t = map (matchDistance t) dict

@@ -4,9 +4,16 @@ import           CWord
 import           Data.Maybe
 import           Decipher
 import           Dictionary
+import           Encrypt
 
 stdDict :: IO Dictionary
 stdDict = loadDictionary "wordlist.txt"
+
+longText :: EncryptedText
+longText = encode key $ fromJust $ fromString "My this I am so cool come be my friend"
+
+longText2 :: EncryptedText
+longText2 = encode key $ fromJust $ fromString "THIS IS COOL THIS IS TEXT THESE ARE WORKS AND THIS IS EVOLUTION AND INTELLIGENCE DONE"
 
 key :: Key
 key = keyFromList $ fmap (fromJust . convertLetter) "ABCDE"
@@ -32,4 +39,9 @@ hw = fromJust $ fromString "hello world"
 testDict :: Dictionary
 testDict = map (fromJust . fromString) [
     "hello", "world", "tasks", "boobs"
+  ]
+
+testDict2 :: Dictionary
+testDict2 = map (fromJust . fromString) [
+    "my", "I", "am", "be"
   ]
