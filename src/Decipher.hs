@@ -6,6 +6,7 @@ import           Control.Monad.State.Lazy
 import           CWord
 import           Data.List
 import           Data.Maybe
+import           Data.Ratio
 import qualified Data.Vector              as V
 import           Dictionary
 import           System.IO
@@ -63,8 +64,6 @@ decode k t = subText t additions
 -----------------------------------------------------
 
 
-
-
 {-
 decipher :: StdGen -> Dictionary -> Int -> EncryptedText -> (CText, Key)
 decipher gen d key_len text = (decode key text, key)
@@ -73,35 +72,22 @@ decipher gen d key_len text = (decode key text, key)
 hoistState :: Monad m => State s a -> StateT s m a
 hoistState = StateT . (return .) . runState
 
-decipher :: StdGen -> Dictionary -> Int -> (Int, Double, Double) -> EncryptedText -> IO Key
-decipher gen d key_len (pop_size, mutate_rate, percent_parents) text = do
-   let xs = evalState (randomInitialPopulation pop_size key_len) gen
-   x <- evalStateT (evolve (mutate_rate, percent_parents) d text xs) gen
-   return $ V.head x
 
-decipher2 :: StdGen -> Dictionary -> Dictionary -> Int -> (Int, Double, Double) -> EncryptedText -> IO Key
-decipher2 gen cutoff_dict evolve_dict key_len (pop_size, mutate_rate, percent_parents) text = do
+
+decipher :: StdGen -> Dictionary -> Dictionary -> Int -> (Int, Double, Double) -> EncryptedText -> IO Key
+decipher gen cutoff_dict evolve_dict key_len (pop_size, mutate_rate, percent_parents) text = do
   let xs = evalState (randomInitialPopulation pop_size key_len) gen
-  x <- evalStateT (evolve2 (mutate_rate, percent_parents) cutoff_dict evolve_dict text xs) gen
+  x <- evalStateT (evolve (mutate_rate, percent_parents) cutoff_dict evolve_dict text xs) gen
   return $ V.head x
 
-evolve2 :: (Double, Double) -> Dictionary -> Dictionary -> EncryptedText -> V.Vector Key -> StateT StdGen IO (V.Vector Key)
-evolve2 config cutoff_dict evolve_dict text keys = do
+evolve :: (Double, Double) -> Dictionary -> Dictionary -> EncryptedText -> V.Vector Key -> StateT StdGen IO (V.Vector Key)
+evolve config cutoff_dict evolve_dict text keys = do
   next_gen <- hoistState $ nextGeneration config evolve_dict text keys
   let (avg, ranks) = rankPopulation cutoff_dict text next_gen
   lift $ putStrLn $ "avg: " ++ (show avg) ++ "\tsample: " ++ (show (next_gen V.! 0)) ++ "\t" ++ (show (next_gen V.! 1)) ++ "\t" ++ (show (next_gen V.! 2))
   case checkSolution ranks next_gen of
     (Just done) -> return (V.singleton done)
-    Nothing     -> evolve2 config cutoff_dict evolve_dict text next_gen
-
-evolve :: (Double, Double) -> Dictionary -> EncryptedText -> V.Vector Key -> StateT StdGen IO (V.Vector Key)
-evolve config d t ks = do
-  next_gen <- hoistState $ nextGeneration config d t ks
-  let (avg, ranks) = rankPopulation d t next_gen
-  lift $ putStrLn $ "avg: " ++ (show avg) ++ "\tsample: " ++ (show (next_gen V.! 0))
-  case checkSolution ranks next_gen of
-    (Just done) -> return (V.singleton done)
-    Nothing     -> evolve config d t next_gen
+    Nothing     -> evolve config cutoff_dict evolve_dict text next_gen
 
 
 
@@ -135,7 +121,8 @@ mutate :: Double -> V.Vector Key -> State StdGen (V.Vector Key)
 mutate p ks = forM ks (chanceMutateKey p)
 
 
-chanceMutateKey :: Double -> Key -> State StdGen Key
+
+chanceMutateKey :: Ratio -> Key -> State StdGen Key
 chanceMutateKey p k = do
   t <- state $ randomR (0, 1)
   if t < p
@@ -180,12 +167,13 @@ rankPopulation d e ks = (avg, ranks)
   where ranks = fmap (evaluateKey d e) ks
         avg   = (sum ranks) / (fromIntegral (length ranks))
 
+{-
 evaluateKey' :: Dictionary -> EncryptedText -> Key -> Double
 evaluateKey' d e k = dist
   where text = decode k e
         wrds = cwords text
         dist    = product $ map (maximum . wordMatchDistances d) wrds
-
+-}
 
 evaluateKey :: Dictionary -> EncryptedText -> Key -> Double
 evaluateKey d e k = dist

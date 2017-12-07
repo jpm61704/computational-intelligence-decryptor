@@ -19,12 +19,12 @@ main :: IO ()
 main = do
   dict <- stdDict
   gen <- newStdGen
-  let e_dict = testDict2
+  e_dict <- commonDict
   putStrLn "beggining evolution"
   args@(p,m,r) <- parseArgs
   putStrLn $ "\tpop_size:\t" ++ show p
   putStrLn $ "\tmutate_rate:\t" ++ show m
   putStrLn $ "\treproduction:\t" ++ show r
-  key <- decipher2 gen dict e_dict 1 args text2
+  key <- decipher gen dict e_dict 5 args long_long_text
   print key
   return ()
