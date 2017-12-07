@@ -24,6 +24,7 @@ library
                      , CipherData
                      , Dictionary
                      , Encrypt
+                     , Percentage
   build-depends:       base >= 4.7 && < 5
                      , text
                      , vector

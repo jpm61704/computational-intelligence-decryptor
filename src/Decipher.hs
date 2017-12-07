@@ -9,6 +9,7 @@ import           Data.Maybe
 import           Data.Ratio
 import qualified Data.Vector              as V
 import           Dictionary
+import           Percentage
 import           System.IO
 import           System.Random
 
@@ -63,7 +64,6 @@ decode k t = subText t additions
 --------------- evolutionary solution ---------------
 -----------------------------------------------------
 
-
 {-
 decipher :: StdGen -> Dictionary -> Int -> EncryptedText -> (CText, Key)
 decipher gen d key_len text = (decode key text, key)
@@ -72,15 +72,18 @@ decipher gen d key_len text = (decode key text, key)
 hoistState :: Monad m => State s a -> StateT s m a
 hoistState = StateT . (return .) . runState
 
+data DecipherState = DState {
+    keys :: V.Vector Key,
+    gen  :: StdGen
+  }
 
-
-decipher :: StdGen -> Dictionary -> Dictionary -> Int -> (Int, Double, Double) -> EncryptedText -> IO Key
+decipher :: StdGen -> Dictionary -> Dictionary -> Int -> (Int, Percentage, Percentage) -> EncryptedText -> IO Key
 decipher gen cutoff_dict evolve_dict key_len (pop_size, mutate_rate, percent_parents) text = do
   let xs = evalState (randomInitialPopulation pop_size key_len) gen
   x <- evalStateT (evolve (mutate_rate, percent_parents) cutoff_dict evolve_dict text xs) gen
   return $ V.head x
 
-evolve :: (Double, Double) -> Dictionary -> Dictionary -> EncryptedText -> V.Vector Key -> StateT StdGen IO (V.Vector Key)
+evolve :: (Percentage, Percentage) -> Dictionary -> Dictionary -> EncryptedText -> V.Vector Key -> StateT StdGen IO (V.Vector Key)
 evolve config cutoff_dict evolve_dict text keys = do
   next_gen <- hoistState $ nextGeneration config evolve_dict text keys
   let (avg, ranks) = rankPopulation cutoff_dict text next_gen
@@ -91,7 +94,7 @@ evolve config cutoff_dict evolve_dict text keys = do
 
 
 
-nextGeneration :: (Double, Double) -> Dictionary -> EncryptedText -> V.Vector Key -> State StdGen (V.Vector Key)
+nextGeneration :: (Percentage, Percentage) -> Dictionary -> EncryptedText -> V.Vector Key -> State StdGen (V.Vector Key)
 nextGeneration (m_rate, repo_rate) d text keys = assert (not (V.null keys)) $ do
       let r@(avg, ranks) = rankPopulation d text keys
           parents  = selectTopXPercent repo_rate ranks keys
@@ -117,14 +120,12 @@ checkSolution ranks keys = do
   x <- V.findIndex (== 1) ranks
   keys V.!? x
 
-mutate :: Double -> V.Vector Key -> State StdGen (V.Vector Key)
+mutate :: Percentage -> V.Vector Key -> State StdGen (V.Vector Key)
 mutate p ks = forM ks (chanceMutateKey p)
 
-
-
-chanceMutateKey :: Ratio -> Key -> State StdGen Key
+chanceMutateKey :: Percentage -> Key -> State StdGen Key
 chanceMutateKey p k = do
-  t <- state $ randomR (0, 1)
+  t <- state random
   if t < p
     then mutateKey k
     else return k
@@ -155,12 +156,12 @@ crossOver (Key x) (Key y) = do
       k2       = V.singleton $ Key (mappend y1 x2)
   return $ mappend k1 k2
 
-selectTopXPercent :: Double -> (V.Vector Double) -> V.Vector Key -> V.Vector Key
+selectTopXPercent :: Percentage -> (V.Vector Double) -> V.Vector Key -> V.Vector Key
 selectTopXPercent percent ranks keys
-  | length ranks == length keys = V.ifilter (\i x -> getranki i >= percentile) keys
+  | length ranks == length keys = V.ifilter (\i x -> getranki i >= cutoff) keys
   | otherwise = error "pop and ranks not same length"
   where getranki = \i -> fromJust $ ranks V.!? i
-        percentile = (sort $ V.toList ranks) !! ((length ranks) - (floor (percent * (fromIntegral (length ranks)))))
+        cutoff = (sort $ V.toList ranks) !! (length ranks - (floor (percentile percent (fromIntegral (length ranks)))))
 
 rankPopulation :: Dictionary -> EncryptedText -> V.Vector Key -> (Double, V.Vector Double)
 rankPopulation d e ks = (avg, ranks)
