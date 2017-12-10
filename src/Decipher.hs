@@ -2,6 +2,7 @@ module Decipher where
 
 import           Control.Exception
 import           Control.Monad.Identity
+import           Control.Monad.Morph
 import           Control.Monad.State.Lazy
 import           CWord
 import           Data.List
@@ -72,60 +73,108 @@ decipher gen d key_len text = (decode key text, key)
 hoistState :: Monad m => State s a -> StateT s m a
 hoistState = StateT . (return .) . runState
 
-data DecipherState = DState {
-    keys :: V.Vector Key,
-    gen  :: StdGen
-  }
+hoistStateT :: Monad m => StateT s (State t) a -> StateT s (StateT t m) a
+hoistStateT = undefined
 
-decipher :: StdGen -> Dictionary -> Dictionary -> Int -> (Int, Percentage, Percentage) -> EncryptedText -> IO Key
+decipher :: StdGen
+         -> Dictionary
+         -> Dictionary
+         -> Int
+         -> (Int, Percentage, Percentage)
+         -> EncryptedText
+         -> IO Key
 decipher gen cutoff_dict evolve_dict key_len (pop_size, mutate_rate, percent_parents) text = do
   let xs = evalState (randomInitialPopulation pop_size key_len) gen
-  x <- evalStateT (evolve (mutate_rate, percent_parents) cutoff_dict evolve_dict text xs) gen
-  return $ V.head x
+  x <- evalStateT (evalStateT (evolve (mutate_rate, percent_parents) cutoff_dict evolve_dict text) xs) gen
+  return x
 
-evolve :: (Percentage, Percentage) -> Dictionary -> Dictionary -> EncryptedText -> V.Vector Key -> StateT StdGen IO (V.Vector Key)
-evolve config cutoff_dict evolve_dict text keys = do
-  next_gen <- hoistState $ nextGeneration config evolve_dict text keys
-  let (avg, ranks) = rankPopulation cutoff_dict text next_gen
-  lift $ putStrLn $ "avg: " ++ (show avg) ++ "\tsample: " ++ (show (next_gen V.! 0)) ++ "\t" ++ (show (next_gen V.! 1)) ++ "\t" ++ (show (next_gen V.! 2))
-  case checkSolution ranks next_gen of
-    (Just done) -> return (V.singleton done)
-    Nothing     -> evolve config cutoff_dict evolve_dict text next_gen
+evolve :: (Percentage, Percentage)
+       -> Dictionary
+       -> Dictionary
+       -> EncryptedText
+       -> StateT (V.Vector Key) (StateT StdGen IO) Key
+evolve config cutoff_dict evolve_dict text = do
+  mapStateT (mapStateT generalize) $ nextGeneration config evolve_dict text
+  ks <- get
+  let (avg, ranks) = rankPopulation cutoff_dict text ks
+  lift $ lift $ putStr $ show avg
+  printKeys
+  let maybe_done = checkSolution ks ranks
+  case maybe_done of
+    (Just done) -> return done
+    Nothing     -> evolve config cutoff_dict evolve_dict text
+
+evolve2 :: (Percentage, Percentage)
+       -> Dictionary
+       -> Dictionary
+       -> EncryptedText
+       -> StateT (V.Vector Key) (StateT StdGen IO) Key
+evolve2 config cutoff_dict evolve_dict text = do
+  mapStateT (mapStateT generalize) $ nextGeneration config evolve_dict text
+  ks <- get
+  let (ev_avg, ev_ranks) = rankPopulation evolve_dict text ks
+  lift $ lift $ putStr $ show ev_avg
+  printKeys
+  let candidates = selectTopXPercent (percentage ev_avg) (ev_ranks) ks
+      (avg, ranks) = rankPopulation cutoff_dict text candidates
+      maybe_done = checkSolution candidates ranks
+  case maybe_done of
+    (Just done) -> return done
+    Nothing     -> evolve config cutoff_dict evolve_dict text
 
 
-
-nextGeneration :: (Percentage, Percentage) -> Dictionary -> EncryptedText -> V.Vector Key -> State StdGen (V.Vector Key)
-nextGeneration (m_rate, repo_rate) d text keys = assert (not (V.null keys)) $ do
-      let r@(avg, ranks) = rankPopulation d text keys
-          parents  = selectTopXPercent repo_rate ranks keys
-      offspring <- hoistState $ breed (length keys) parents
-      mutated <- mutate m_rate offspring
-      return mutated
+printKeys :: StateT (V.Vector Key) (StateT StdGen IO) ()
+printKeys = do
+  ks <- get
+  lift $ lift $ putStrLn $ "\tsample: " ++ (show (ks V.! 0)) ++ "\t" ++ (show (ks V.! 1)) ++ "\t" ++ (show (ks V.! 2))
+  return ()
 
 
+nextGeneration :: (Percentage, Percentage)
+               -> Dictionary
+               -> EncryptedText
+               -> StateT (V.Vector Key) (State StdGen) ()
+nextGeneration (m_rate, repo_rate) d text = do
+  ks <- get
+  let r@(avg, ranks) = rankPopulation d text ks
+      parents  = selectTopXPercent repo_rate ranks ks
+  put parents
+  breed (length ks)
+  mutate m_rate
 
-breed :: Int -> V.Vector Key -> State StdGen (V.Vector Key)
-breed n ps = assert (length ps > 0) $ do
-               let random_loc = state $ randomR (0, length ps - 1)
-               i <- random_loc
-               j <- random_loc
-               let k1 = (ps V.! i)
-                   k2 = (ps V.! j)
-               kid <- crossOver k1 k2
-               kids <- if n > 2 then breed (n - 2) ps else return mempty
-               return $ mappend kid kids
 
-checkSolution :: V.Vector Double -> V.Vector Key -> Maybe Key
-checkSolution ranks keys = do
-  x <- V.findIndex (== 1) ranks
-  keys V.!? x
+-- this state business in this function doesnt feel right
+breed :: Int -> StateT (V.Vector Key) (State StdGen) ()
+breed n = do
+  ps <- get
+  let random_loc = state $ randomR (0, length ps - 1)
+  i <- lift $ random_loc
+  j <- lift $ random_loc
+  let k1 = (ps V.! i)
+      k2 = (ps V.! j)
+  kid <- lift $ twoPointCrossOver k1 k2
+  if n > 2 then breed (n - 2) else return ()
+  kids <- get
+  put $ mappend kid kids
+  return ()
 
-mutate :: Percentage -> V.Vector Key -> State StdGen (V.Vector Key)
-mutate p ks = forM ks (chanceMutateKey p)
+-- the threshold is the double size to be larger then in order to qualify as a candidate solution
+checkSolution :: V.Vector Key -> V.Vector Double -> (Maybe Key)
+checkSolution keys ranks = do
+  case V.findIndex (== 1) ranks of
+    (Just sol) -> keys V.!? sol
+    Nothing    -> Nothing
+
+
+mutate :: Percentage -> StateT (V.Vector Key) (State StdGen) ()
+mutate p = do
+  ks <- get
+  lift $ forM ks ((chanceMutateKey p))
+  return ()
 
 chanceMutateKey :: Percentage -> Key -> State StdGen Key
 chanceMutateKey p k = do
-  t <- state random
+  t <- state $ random
   if t < p
     then mutateKey k
     else return k
@@ -145,6 +194,21 @@ randomInitialPopulation n len = do
   x  <- state $ randomR bounds
   xs <- randomInitialPopulation (n - 1) len
   return $ if n > 1 then V.cons x xs else V.singleton x
+
+twoPointCrossOver :: Key -> Key -> State StdGen (V.Vector Key)
+twoPointCrossOver (Key x) (Key y) = do
+  l1 <- state $ randomR (0, length x - 2)
+  l2 <- state $ randomR (l1, length x - 1)
+  let (x1, x2, x3) = splitAt3 l1 l2 x
+      (y1, y2, y3) = splitAt3 l1 l2 y
+      k1           = V.singleton $ Key (mconcat [x1, y2, x3])
+      k2           = V.singleton $ Key (mconcat [y1, x2, y3])
+  return $ mappend k1 k2
+
+splitAt3 :: Int -> Int -> V.Vector a -> (V.Vector a, V.Vector a, V.Vector a)
+splitAt3 l1 l2 v = (v1, v2, v3)
+  where (v1, vs) = V.splitAt l1 v
+        (v2, v3) = V.splitAt l2 vs
 
 
 crossOver :: Key -> Key -> State StdGen (V.Vector Key)
