@@ -1,0 +1,11 @@
+
+The third implementation is largely similiar to the second in that it uses both common words and uncommon words to do its decyption. This is done by uploading a dictionary of words of these classes. A two point crossover function is used on random points to produce offspring. Those offspring are in turn passed into a mutation function with a chance of randomly changing on of the key's characters.
+
+The rationale behind this approeach is that long, uncommon, words are just as likely to validate a candidate key as common words are to produce them. So the combonation of the two leads to efficient funnelling of good solutions to the next generation.
+
+------
+
+This slight change to the algorithm always converged on the test problems with key lengths from 1-5 in a reasonable number of iterations(3-20). Larger populations tended to only slightly improve the performance of the algorithm over smaller ones. The ideal population size eventually settled around 100.
+
+The advantage in the results of this algorithm over the other largely came when shorter keys but longer phrases were used. This would allow the slightly longer dictionary to find better solutions more quickly over fewer generations.
+
